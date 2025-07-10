@@ -1,0 +1,69 @@
+<%#
+LuCI - NAT Switcher
+-%>
+
+<%
+-- フォームが送信された場合の処理
+local h = {}
+if luci.http.formvalue("apply") then
+    local mode = luci.http.formvalue("nat_mode")
+    local zone_index = "1" -- 事前に確認したwanゾーンのインデックス
+
+    if mode == "standard" then
+        -- EIM/APDF (Port Restricted Cone NAT) の設定を実行
+        luci.sys.exec("uci set firewall.@zone["..zone_index.."].masq='1'")
+        luci.sys.exec("uci set fullconenat.config.mode='disable'")
+        luci.sys.exec("/etc/init.d/fullconenat stop") -- 先にfullconenatを停止
+        luci.sys.exec("echo '' > /etc/firewall.user")
+        h.message = "Port Restricted Cone NAT (EIM/APDF) に設定しました。"
+    elseif mode == "symmetric" then
+        -- APDM (Symmetric) の設定を実行
+        luci.sys.exec("uci set firewall.@zone["..zone_index.."].masq='0'")
+        luci.sys.exec("uci set fullconenat.config.mode='disable'")
+        luci.sys.exec("/etc/init.d/fullconenat stop") -- 先にfullconenatを停止
+        luci.sys.exec("echo 'iptables -t nat -A zone_wan_postrouting -j MASQUERADE --random' > /etc/firewall.user") -- 後からルールを書き込む
+        h.message = "Symmetric NAT (APDM) に設定しました。"
+    elseif mode == "fullcone" then
+        -- EIM/EIF (Full Cone) の設定を実行
+        luci.sys.exec("uci set firewall.@zone["..zone_index.."].masq='0'")
+        luci.sys.exec("uci set fullconenat.config.mode='all'")
+        luci.sys.exec("echo '' > /etc/firewall.user")
+        h.message = "Full Cone NAT (EIM/EIF) に設定しました。"
+    end
+    
+    -- 設定のコミットと再起動
+    luci.sys.exec("uci commit")
+    luci.sys.exec("/etc/init.d/firewall restart")
+    
+    -- fullconenatモードの場合のみ、サービスを再起動
+    if mode == "fullcone" then
+        luci.sys.exec("/etc/init.d/fullconenat restart")
+    end
+
+    h.message = h.message .. " ファイアウォールと関連サービスを再起動しました。"
+end
+-%>
+
+<%+header%>
+
+<h2><a id="content" name="content"><%:NATタイプ切替%></a></h2>
+
+<div class="cbi-map">
+    <form method="post" action="">
+        <div class="cbi-section">
+            <p>適用したいNATタイプを選択し、「設定を適用」ボタンを押してください。</p>
+            <select name="nat_mode" size="1" style="width: 300px;">
+                <option value="standard">Port Restricted Cone NAT (EIM/APDF)</option>
+                <option value="symmetric">Symmetric NAT (APDM)</option>
+                <option value="fullcone">Full Cone NAT (EIM/EIF)</option>
+            </select>
+            <input type="submit" name="apply" value="<%:設定を適用%>" class="cbi-button cbi-button-apply" />
+        </div>
+    </form>
+</div>
+
+<% if h.message then %>
+    <div class="alert-message"><%=h.message%></div>
+<% end %>
+
+<%+footer%>
